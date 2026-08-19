@@ -162,6 +162,73 @@ class PaddleVlOcr:
         return outputs
 
 
+class TransformersVlOcr:
+    """PaddleOCR-VL through PyTorch/Transformers for ARM64 NVIDIA GPUs."""
+
+    def __init__(self, device: str = "cuda") -> None:
+        try:
+            import torch
+            from transformers import AutoModelForImageTextToText, AutoProcessor
+        except ImportError as error:
+            raise RuntimeError(
+                "Install the DGX profile with `uv sync --extra ocr-dgx`"
+            ) from error
+
+        if device == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError("CUDA is not available to PyTorch")
+
+        self._torch = torch
+        self._processor = AutoProcessor.from_pretrained(
+            "PaddlePaddle/PaddleOCR-VL-1.6"
+        )
+        self._model = AutoModelForImageTextToText.from_pretrained(
+            "PaddlePaddle/PaddleOCR-VL-1.6",
+            torch_dtype=torch.bfloat16,
+        ).to(device).eval()
+
+    def recognize(self, image: np.ndarray) -> OcrResult:
+        from PIL import Image
+
+        rgb = np.ascontiguousarray(image[:, :, ::-1])
+        pil_image = Image.fromarray(rgb)
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": pil_image},
+                    {"type": "text", "text": "OCR:"},
+                ],
+            }
+        ]
+        max_pixels = 1280 * 28 * 28
+        inputs = self._processor.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+            images_kwargs={
+                "size": {
+                    "shortest_edge": self._processor.image_processor.min_pixels,
+                    "longest_edge": max_pixels,
+                }
+            },
+        ).to(self._model.device)
+        with self._torch.inference_mode():
+            outputs = self._model.generate(**inputs, max_new_tokens=128)
+        prompt_length = inputs["input_ids"].shape[-1]
+        text = self._processor.decode(
+            outputs[0, prompt_length:],
+            skip_special_tokens=True,
+        )
+        return OcrResult(lines=text.splitlines())
+
+    def recognize_many(self, images: list[np.ndarray]) -> list[OcrResult]:
+        # Sequential generation keeps memory use predictable on unified-memory
+        # DGX Spark systems. CLI batch size still bounds decoded image memory.
+        return [self.recognize(image) for image in images]
+
+
 def create_ocr_backend(
     profile: str,
     *,
@@ -171,4 +238,8 @@ def create_ocr_backend(
         return PaddleMobileOcr()
     if profile == "vl":
         return PaddleVlOcr(server_url=server_url)
+    if profile == "gpu":
+        if server_url:
+            raise ValueError("The local Transformers GPU profile has no server URL")
+        return TransformersVlOcr()
     raise ValueError(f"Unknown OCR profile: {profile}")

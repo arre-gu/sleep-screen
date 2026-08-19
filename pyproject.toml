@@ -11,9 +11,6 @@ dependencies = [
     "pydantic>=2.12.5",
     "pytesseract>=0.3.13",
     "requests>=2.34.2",
-    "torch>=2.13.0",
-    "torchvision>=0.28.0",
-    "transformers>=5.15.0",
 ]
 
 [project.optional-dependencies]
@@ -24,3 +21,21 @@ ocr-cpu = [
 ocr-vl-client = [
     "paddleocr[doc-parser]>=3.6.0,<4",
 ]
+ocr-dgx = [
+    "torch>=2.11.0",
+    "torchvision>=0.26.0",
+    "transformers>=5.15.0",
+]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu130", extra = "ocr-dgx" },
+]
+torchvision = [
+    { index = "pytorch-cu130", extra = "ocr-dgx" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true

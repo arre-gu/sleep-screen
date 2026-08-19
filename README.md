@@ -1,203 +1,189 @@
 # Screen Time screenshot extraction
 
-This project is intended to run directly on a Linux GPU machine containing the
-code and an `images/` directory:
+Extract three values from each Apple Screen Time screenshot:
 
-```text
-sleep-screen/
-├── images/
-│   ├── image1.png
-│   └── ...
-├── ocr_backends.py
-├── screen_time_extractor.py
-└── pyproject.toml
+- Swedish date
+- Total screen time in minutes
+- 24 hourly screen-time values in minutes
+
+The images must be in `images/`. Each machine processes its own local files;
+there is no OCR server or communication between machines.
+
+Choose one setup:
+
+1. Windows laptop, CPU
+2. Linux ARM GPU, NVIDIA DGX Spark
+
+## Windows laptop — CPU
+
+### Install
+
+Open PowerShell in the project directory. Install `uv` if needed:
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-OCR reads only the Swedish date and displayed daily total. The 24 hourly values
-are measured from the chart pixels and reconciled against that total. The
-result is deterministic across light/dark mode and different screenshot sizes.
+Restart PowerShell if `uv` is not immediately available, then install the CPU
+OCR environment:
 
-## GPU setup
+```powershell
+uv sync --extra ocr-cpu
+```
 
-The GPU profile uses `PaddlePaddle/PaddleOCR-VL-1.6`, a 1B-parameter BF16 OCR
-and document-understanding model. If `uv` is not already installed on the Linux
-machine, install it with the official standalone installer:
+This installs PaddleOCR with the mobile detector and Swedish-aware Latin text
+recognizer. The first processing run downloads their weights into
+`.cache/paddlex`.
+
+### Process images
+
+Create output directories and process every PNG in `images/`:
+
+```powershell
+New-Item -ItemType Directory -Force output, logs
+
+.\.venv\Scripts\python.exe screen_time_extractor.py 'images\*.png' `
+  --ocr-profile cpu `
+  --batch-size 16 `
+  --continue-on-error `
+  > output\screen-time.jsonl `
+  2> logs\screen-time.log
+```
+
+For a quick test with one image:
+
+```powershell
+.\.venv\Scripts\python.exe screen_time_extractor.py images\image1.png `
+  --ocr-profile cpu `
+  --batch-size 1
+```
+
+## Linux ARM GPU — NVIDIA DGX Spark
+
+The DGX Spark path uses PyTorch with CUDA 13 and the Transformers implementation
+of `PaddlePaddle/PaddleOCR-VL-1.6`. It does not install the PaddlePaddle GPU
+wheel, because the standard wheel is not built for the DGX Spark's ARM64
+architecture.
+
+### Verify the machine
+
+Run these commands on the DGX Spark:
+
+```bash
+uname -m
+nvidia-smi
+```
+
+`uname -m` should report `aarch64` and `nvidia-smi` should show the GPU.
+
+### Install
+
+Open a shell in the project directory. Install `uv` if needed:
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
-uv --version
 ```
 
-The installer normally updates the shell profile automatically. The explicit
-`PATH` export also makes `uv` available immediately in the current SSH session.
-
-Install the project and its VL dependencies:
+Install the DGX environment. The project configuration selects PyTorch's CUDA
+13.0 package index automatically:
 
 ```bash
-cd /path/to/sleep-screen
-uv sync --extra ocr-vl-client
+uv sync --extra ocr-dgx
 ```
 
-Install the PaddlePaddle GPU wheel matching the machine's CUDA version. For
-CUDA 12.6:
+Verify that PyTorch can use the GPU:
 
 ```bash
-uv pip install paddlepaddle-gpu==3.2.1 \
-  --index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/
+.venv/bin/python -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0))"
 ```
 
-Use the corresponding PaddlePaddle package index for a different CUDA version.
-Verify that the environment can see the GPU:
+The first processing run downloads `PaddleOCR-VL-1.6` into the Hugging Face
+cache under `~/.cache/huggingface/`.
+
+### Process images
+
+Create output directories and process every PNG in `images/`:
 
 ```bash
-.venv/bin/python -c "import paddle; print(paddle.device.cuda.device_count()); paddle.utils.run_check()"
-```
+mkdir -p output logs
 
-The first extraction downloads the official model weights into
-`.cache/paddlex`. Later jobs reuse that cache.
-
-### DGX Spark / ARM64 CPU fallback
-
-DGX Spark uses an ARM64 CPU. PaddlePaddle currently provides ARM64 CPU wheels
-but does not provide ARM64 GPU wheels, so the local `vl` profile cannot install
-there. Install and run the lighter CPU OCR profile instead:
-
-```bash
-uv sync --extra ocr-cpu
-
-OMP_NUM_THREADS=20 \
-OPENBLAS_NUM_THREADS=20 \
 .venv/bin/python screen_time_extractor.py 'images/*.png' \
-  --ocr-profile cpu \
-  --batch-size 16 \
-  --continue-on-error
+  --ocr-profile gpu \
+  --batch-size 8 \
+  --continue-on-error \
+  > output/screen-time.jsonl \
+  2> logs/screen-time.log
 ```
 
-The extractor does not create multiprocessing workers. `--batch-size` controls
-how many images are passed to one OCR pipeline call; Paddle and OpenCV may use
-native CPU threads internally. Start with the thread settings above and adjust
-them after benchmarking. Running several Python processes loads a separate OCR
-model in each process and may reduce performance through CPU and memory
-contention.
-
-To retain the VL profile, run PaddleOCR-VL on a supported x86_64 GPU host and
-use its endpoint from this machine:
-
-```bash
-.venv/bin/python screen_time_extractor.py 'images/*.png' \
-  --ocr-profile vl \
-  --vl-server-url http://GPU_HOST:8080 \
-  --batch-size 16 \
-  --continue-on-error
-```
-
-## Run the extraction job over SSH
-
-SSH to the GPU machine and enter the project directory:
-
-```bash
-ssh USER@GPU_HOST
-cd /path/to/sleep-screen
-mkdir -p outputs logs
-```
-
-Run a small smoke test first:
+For a quick test with one image:
 
 ```bash
 .venv/bin/python screen_time_extractor.py images/image1.png \
-  --ocr-profile vl \
+  --ocr-profile gpu \
   --batch-size 1
 ```
 
-Run the complete `images/` directory as a background job:
+To keep a long job running after disconnecting from SSH:
 
 ```bash
-run_stamp="$(date +%m-%d-%H-%M)"
-output_file="outputs/${run_stamp}.jsonl"
-log_file="logs/${run_stamp}.log"
-
 nohup .venv/bin/python screen_time_extractor.py 'images/*.png' \
-  --ocr-profile vl \
-  --batch-size 32 \
+  --ocr-profile gpu \
+  --batch-size 8 \
   --continue-on-error \
-  > "$output_file" \
-  2> "$log_file" \
+  > output/screen-time.jsonl \
+  2> logs/screen-time.log \
   < /dev/null &
 
-echo $! > "outputs/${run_stamp}.pid"
-echo "Wrote results to $output_file"
+echo $! > output/screen-time.pid
 ```
 
-The image glob is quoted deliberately. The extractor expands it internally,
-avoiding the shell's command-length limit when the dataset contains many files.
-
-To select a specific physical GPU:
+Check the background job later with:
 
 ```bash
-run_stamp="$(date +%m-%d-%H-%M)"
-output_file="outputs/${run_stamp}.jsonl"
-log_file="logs/${run_stamp}.log"
-
-CUDA_VISIBLE_DEVICES=1 nohup .venv/bin/python screen_time_extractor.py 'images/*.png' \
-  --ocr-profile vl \
-  --batch-size 32 \
-  --continue-on-error \
-  > "$output_file" \
-  2> "$log_file" \
-  < /dev/null &
-
-echo $! > "outputs/${run_stamp}.pid"
-echo "Wrote results to $output_file"
+ps -p "$(cat output/screen-time.pid)"
+tail -f logs/screen-time.log
 ```
 
-Reduce `--batch-size` if the process runs out of GPU memory. Increase it only
-after measuring throughput and memory use on the target machine.
+## Output
 
-## Monitor the job
-
-The SSH connection can be closed after starting the `nohup` job. On the next
-login:
-
-```bash
-latest_output="$(ls -t outputs/*.jsonl | head -n1)"
-latest_log="$(ls -t logs/*.log | head -n1)"
-latest_pid="$(ls -t outputs/*.pid | head -n1)"
-tail -f "$latest_log"
-ps -p "$(cat "$latest_pid")"
-wc -l "$latest_output"
-grep '"error"' "$latest_output"
-```
-
-Standard output is JSON Lines: one result or error object per image. For
-example:
+`output/screen-time.jsonl` contains one JSON object per image:
 
 ```json
 {"image":"images/image1.png","date":"22 mars","total_minutes":231,"hourly_minutes":[4,0,0,0,0,0,0,16,36,24,11,6,1,3,23,24,0,2,16,9,7,42,7,0]}
 ```
 
-## Validation and failed images
-
-Each successful result is validated with Pydantic:
-
-- `date` must contain a recognized Swedish calendar date. No year is inferred.
-- `total_minutes` must be between 0 and 1440.
-- `hourly_minutes` must contain exactly 24 values between 0 and 60.
-- The hourly values must sum to the displayed daily total.
-
-With `--continue-on-error`, an image that fails OCR, chart detection, or total
-reconciliation produces an error object and does not stop the dataset job:
+With `--continue-on-error`, failed images are recorded instead of stopping the
+job:
 
 ```json
 {"image":"images/unusual.png","error":"ValueError","message":"Could not find chart grid lines"}
 ```
 
-Review these images separately rather than treating them as valid zero-valued
-records.
+Find failed images with:
+
+```bash
+grep '"error"' output/screen-time.jsonl
+```
+
+## Validation
+
+Successful records are validated before they are written:
+
+- The date must contain a recognized Swedish day and month.
+- Total minutes must be between 0 and 1440.
+- The hourly array must contain exactly 24 values between 0 and 60.
+- The hourly values must sum to the total minutes.
 
 ## Tests
 
-The automated tests do not load the GPU OCR model:
+Windows PowerShell:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+Linux:
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -v

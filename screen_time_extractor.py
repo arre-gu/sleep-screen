@@ -340,9 +340,9 @@ def main() -> None:
     parser.add_argument("images", nargs="+")
     parser.add_argument(
         "--ocr-profile",
-        choices=("none", "cpu", "vl"),
+        choices=("none", "cpu", "gpu", "vl"),
         default="none",
-        help="CPU PP-OCRv5, GPU PaddleOCR-VL, or bars only",
+        help="CPU PP-OCRv5, local Transformers GPU, PaddleOCR-VL, or bars only",
     )
     parser.add_argument(
         "--vl-server-url",
