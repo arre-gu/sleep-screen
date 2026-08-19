@@ -57,6 +57,41 @@ Verify that the environment can see the GPU:
 The first extraction downloads the official model weights into
 `.cache/paddlex`. Later jobs reuse that cache.
 
+### DGX Spark / ARM64 CPU fallback
+
+DGX Spark uses an ARM64 CPU. PaddlePaddle currently provides ARM64 CPU wheels
+but does not provide ARM64 GPU wheels, so the local `vl` profile cannot install
+there. Install and run the lighter CPU OCR profile instead:
+
+```bash
+uv sync --extra ocr-cpu
+
+OMP_NUM_THREADS=20 \
+OPENBLAS_NUM_THREADS=20 \
+.venv/bin/python screen_time_extractor.py 'images/*.png' \
+  --ocr-profile cpu \
+  --batch-size 16 \
+  --continue-on-error
+```
+
+The extractor does not create multiprocessing workers. `--batch-size` controls
+how many images are passed to one OCR pipeline call; Paddle and OpenCV may use
+native CPU threads internally. Start with the thread settings above and adjust
+them after benchmarking. Running several Python processes loads a separate OCR
+model in each process and may reduce performance through CPU and memory
+contention.
+
+To retain the VL profile, run PaddleOCR-VL on a supported x86_64 GPU host and
+use its endpoint from this machine:
+
+```bash
+.venv/bin/python screen_time_extractor.py 'images/*.png' \
+  --ocr-profile vl \
+  --vl-server-url http://GPU_HOST:8080 \
+  --batch-size 16 \
+  --continue-on-error
+```
+
 ## Run the extraction job over SSH
 
 SSH to the GPU machine and enter the project directory:
