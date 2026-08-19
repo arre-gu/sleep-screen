@@ -99,7 +99,7 @@ SSH to the GPU machine and enter the project directory:
 ```bash
 ssh USER@GPU_HOST
 cd /path/to/sleep-screen
-mkdir -p output logs
+mkdir -p outputs logs
 ```
 
 Run a small smoke test first:
@@ -113,15 +113,20 @@ Run a small smoke test first:
 Run the complete `images/` directory as a background job:
 
 ```bash
+run_stamp="$(date +%m-%d-%H-%M)"
+output_file="outputs/${run_stamp}.jsonl"
+log_file="logs/${run_stamp}.log"
+
 nohup .venv/bin/python screen_time_extractor.py 'images/*.png' \
   --ocr-profile vl \
   --batch-size 32 \
   --continue-on-error \
-  > output/screen-time.jsonl \
-  2> logs/screen-time.log \
+  > "$output_file" \
+  2> "$log_file" \
   < /dev/null &
 
-echo $! > output/screen-time.pid
+echo $! > "outputs/${run_stamp}.pid"
+echo "Wrote results to $output_file"
 ```
 
 The image glob is quoted deliberately. The extractor expands it internally,
@@ -130,13 +135,20 @@ avoiding the shell's command-length limit when the dataset contains many files.
 To select a specific physical GPU:
 
 ```bash
+run_stamp="$(date +%m-%d-%H-%M)"
+output_file="outputs/${run_stamp}.jsonl"
+log_file="logs/${run_stamp}.log"
+
 CUDA_VISIBLE_DEVICES=1 nohup .venv/bin/python screen_time_extractor.py 'images/*.png' \
   --ocr-profile vl \
   --batch-size 32 \
   --continue-on-error \
-  > output/screen-time.jsonl \
-  2> logs/screen-time.log \
+  > "$output_file" \
+  2> "$log_file" \
   < /dev/null &
+
+echo $! > "outputs/${run_stamp}.pid"
+echo "Wrote results to $output_file"
 ```
 
 Reduce `--batch-size` if the process runs out of GPU memory. Increase it only
@@ -148,10 +160,13 @@ The SSH connection can be closed after starting the `nohup` job. On the next
 login:
 
 ```bash
-tail -f logs/screen-time.log
-ps -p "$(cat output/screen-time.pid)"
-wc -l output/screen-time.jsonl
-grep '"error"' output/screen-time.jsonl
+latest_output="$(ls -t outputs/*.jsonl | head -n1)"
+latest_log="$(ls -t logs/*.log | head -n1)"
+latest_pid="$(ls -t outputs/*.pid | head -n1)"
+tail -f "$latest_log"
+ps -p "$(cat "$latest_pid")"
+wc -l "$latest_output"
+grep '"error"' "$latest_output"
 ```
 
 Standard output is JSON Lines: one result or error object per image. For
