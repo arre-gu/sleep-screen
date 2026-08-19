@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import redirect_stdout
 import difflib
 import glob
 import json
 import re
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -381,22 +383,25 @@ def main() -> None:
     if args.ocr_profile != "none":
         from ocr_backends import create_ocr_backend
 
-        ocr = create_ocr_backend(
-            args.ocr_profile,
-            server_url=args.vl_server_url,
-        )
+        with redirect_stdout(sys.stderr):
+            ocr = create_ocr_backend(
+                args.ocr_profile,
+                server_url=args.vl_server_url,
+            )
 
     if ocr is not None:
         for start in range(0, len(args.images), args.batch_size):
             paths = args.images[start : start + args.batch_size]
             try:
-                readings = extract_screen_times(paths, ocr)
+                with redirect_stdout(sys.stderr):
+                    readings = extract_screen_times(paths, ocr)
             except Exception:
                 if not args.continue_on_error:
                     raise
                 for image_path in paths:
                     try:
-                        reading = extract_screen_time(image_path, ocr)
+                        with redirect_stdout(sys.stderr):
+                            reading = extract_screen_time(image_path, ocr)
                         payload = {"image": image_path, **reading.model_dump()}
                     except Exception as error:
                         payload = {
