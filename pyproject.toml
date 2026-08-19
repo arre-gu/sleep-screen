@@ -1,0 +1,26 @@
+[project]
+name = "sleep-screen"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "ipykernel>=7.3.0",
+    "numpy>=2.2.6",
+    "opencv-python>=5.0.0.93",
+    "pillow>=12.3.0",
+    "pip>=26.2.1",
+    "pydantic>=2.12.5",
+    "pytesseract>=0.3.13",
+    "requests>=2.34.2",
+    "torch>=2.13.0",
+    "torchvision>=0.28.0",
+    "transformers>=5.15.0",
+]
+
+[project.optional-dependencies]
+ocr-cpu = [
+    "paddleocr>=3.6.0,<4",
+    "paddlepaddle==3.2.2",
+]
+ocr-vl-client = [
+    "paddleocr[doc-parser]>=3.6.0,<4",
+]
