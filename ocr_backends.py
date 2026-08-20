@@ -100,68 +100,6 @@ class PaddleMobileOcr:
         return outputs
 
 
-class PaddleVlOcr:
-    """GPU OCR using PaddleOCR-VL-1.6 locally or through a vLLM server."""
-
-    def __init__(
-        self,
-        *,
-        server_url: str | None = None,
-        device: str = "gpu:0",
-    ) -> None:
-        _configure_paddle_cache()
-        try:
-            from paddleocr import PaddleOCRVL
-        except ImportError as error:
-            raise RuntimeError(
-                "Install the VL client with `uv sync --extra ocr-vl-client`"
-            ) from error
-
-        arguments: dict[str, Any] = {
-            "pipeline_version": "v1.6",
-            "use_doc_orientation_classify": False,
-            "use_doc_unwarping": False,
-            "use_layout_detection": False,
-        }
-        if server_url:
-            endpoint = server_url.rstrip("/")
-            if not endpoint.endswith("/v1"):
-                endpoint += "/v1"
-            arguments.update(
-                vl_rec_backend="vllm-server",
-                vl_rec_server_url=endpoint,
-                vl_rec_api_model_name="PaddlePaddle/PaddleOCR-VL-1.6",
-            )
-        else:
-            arguments["device"] = device
-        self._pipeline = PaddleOCRVL(**arguments)
-
-    def recognize(self, image: np.ndarray) -> OcrResult:
-        return self.recognize_many([image])[0]
-
-    def recognize_many(self, images: list[np.ndarray]) -> list[OcrResult]:
-        outputs: list[OcrResult] = []
-        output = self._pipeline.predict(
-            images,
-            prompt_label="ocr",
-            temperature=0.0,
-            max_new_tokens=128,
-        )
-        for result in output:
-            lines: list[str] = []
-            payload = _result_json(result)
-            blocks = payload.get("parsing_res_list", [])
-            for block in blocks:
-                content = block.get("block_content")
-                if content:
-                    lines.extend(str(content).splitlines())
-            # PaddleOCR-VL does not expose calibrated confidence scores.
-            outputs.append(OcrResult(lines=lines))
-        if len(outputs) != len(images):
-            raise RuntimeError("PaddleOCR-VL returned a different number of results than inputs")
-        return outputs
-
-
 class TransformersVlOcr:
     """PaddleOCR-VL through PyTorch/Transformers for ARM64 NVIDIA GPUs."""
 
@@ -229,17 +167,9 @@ class TransformersVlOcr:
         return [self.recognize(image) for image in images]
 
 
-def create_ocr_backend(
-    profile: str,
-    *,
-    server_url: str | None = None,
-) -> OcrBackend:
+def create_ocr_backend(profile: str) -> OcrBackend:
     if profile == "cpu":
         return PaddleMobileOcr()
-    if profile == "vl":
-        return PaddleVlOcr(server_url=server_url)
     if profile == "gpu":
-        if server_url:
-            raise ValueError("The local Transformers GPU profile has no server URL")
         return TransformersVlOcr()
     raise ValueError(f"Unknown OCR profile: {profile}")

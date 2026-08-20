@@ -1,9 +1,9 @@
-import os
 import json
+from pathlib import Path
 
-file_path = os.path.join("output","screen-time.jsonl")
+file_path = max(Path("output").glob("screen-time-*.jsonl"), key=lambda path: path.stat().st_mtime)
 data = []
-with open(file_path, "r", encoding="utf-16") as file:
+with file_path.open("r", encoding="utf-8") as file:
     for line in file:
         # Parse each line individually and append to the list
         data.append(json.loads(line))

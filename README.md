@@ -42,18 +42,17 @@ Create output directories and process every PNG in `images/`:
 ```powershell
 New-Item -ItemType Directory -Force output, logs
 
-.\.venv\Scripts\python.exe screen_time_extractor.py 'images\*.png' `
+uv run python screen_time_extractor.py 'images\*.png' `
   --ocr-profile cpu `
   --batch-size 16 `
   --continue-on-error `
-  > output\screen-time.jsonl `
   2> logs\screen-time.log
 ```
 
 For a quick test with one image:
 
 ```powershell
-.\.venv\Scripts\python.exe screen_time_extractor.py images\image1.png `
+uv run python screen_time_extractor.py images\image1.png `
   --ocr-profile cpu `
   --batch-size 1
 ```
@@ -95,7 +94,7 @@ uv sync --extra ocr-dgx
 Verify that PyTorch can use the GPU:
 
 ```bash
-.venv/bin/python -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0))"
+uv run python -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0))"
 ```
 
 The first processing run downloads `PaddleOCR-VL-1.6` into the Hugging Face
@@ -108,18 +107,17 @@ Create output directories and process every PNG in `images/`:
 ```bash
 mkdir -p output logs
 
-.venv/bin/python screen_time_extractor.py 'images/*.png' \
+uv run python screen_time_extractor.py 'images/*.png' \
   --ocr-profile gpu \
   --batch-size 8 \
   --continue-on-error \
-  > output/screen-time.jsonl \
   2> logs/screen-time.log
 ```
 
 For a quick test with one image:
 
 ```bash
-.venv/bin/python screen_time_extractor.py images/image1.png \
+uv run python screen_time_extractor.py images/image1.png \
   --ocr-profile gpu \
   --batch-size 1
 ```
@@ -127,11 +125,11 @@ For a quick test with one image:
 To keep a long job running after disconnecting from SSH:
 
 ```bash
-nohup .venv/bin/python screen_time_extractor.py 'images/*.png' \
+nohup uv run python screen_time_extractor.py 'images/*.png' \
   --ocr-profile gpu \
   --batch-size 8 \
   --continue-on-error \
-  > output/screen-time.jsonl \
+  > /dev/null \
   2> logs/screen-time.log \
   < /dev/null &
 
@@ -147,7 +145,11 @@ tail -f logs/screen-time.log
 
 ## Output
 
-`output/screen-time.jsonl` contains one JSON object per image:
+Each run creates a timestamped file such as
+`output/screen-time-20260820-143052.jsonl`. It contains one JSON object per
+image. The timestamp uses local machine time in `yyyyMMdd-HHmmss` format and is
+captured by `screen_time_extractor.py` immediately before processing starts.
+Use `--output-dir PATH` to save the timestamped file in another directory.
 
 ```json
 {"image":"images/image1.png","date":"22 mars","total_minutes":231,"hourly_minutes":[4,0,0,0,0,0,0,16,36,24,11,6,1,3,23,24,0,2,16,9,7,42,7,0]}
@@ -163,8 +165,19 @@ job:
 Find failed images with:
 
 ```bash
-grep '"error"' output/screen-time.jsonl
+grep '"error"' output/screen-time-*.jsonl
 ```
+
+### Detection sanity checks
+
+After an image is parsed and validated successfully, the script saves an
+annotated copy with the same filename in `boxes/`:
+
+- Green rectangle: detected 24-hour bar chart
+- Magenta rectangle: derived date and total screen-time text region
+
+Images that fail parsing do not get an annotated copy. The script creates the
+directory automatically. Use `--boxes-dir PATH` to save these images elsewhere.
 
 ## Validation
 
@@ -180,11 +193,11 @@ Successful records are validated before they are written:
 Windows PowerShell:
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+uv run python -m unittest discover -s tests -v
 ```
 
 Linux:
 
 ```bash
-.venv/bin/python -m unittest discover -s tests -v
+uv run python -m unittest discover -s tests -v
 ```

@@ -8,6 +8,7 @@ import json
 import re
 import sys
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -25,7 +26,6 @@ class ChartGeometry:
     right: int
     top: int
     baseline: int
-
 
 class ScreenTimeReading(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -144,8 +144,11 @@ def locate_hourly_chart(image: np.ndarray) -> ChartGeometry:
     return ChartGeometry(left=left, right=right, top=top, baseline=baseline)
 
 
-def crop_summary_text(image: np.ndarray, chart: ChartGeometry) -> np.ndarray:
-    """Crop the date and daily-total text using the hourly chart as an anchor."""
+def summary_text_bounds(
+    image: np.ndarray,
+    chart: ChartGeometry,
+) -> tuple[int, int, int, int]:
+    """Return the summary-text bounds as left, top, right, bottom."""
     height, width = image.shape[:2]
     top = max(0, int(round(chart.top - width * 0.58)))
     bottom = min(height, int(round(chart.top - width * 0.37)))
@@ -153,7 +156,47 @@ def crop_summary_text(image: np.ndarray, chart: ChartGeometry) -> np.ndarray:
     right = min(width, chart.right + 1)
     if bottom <= top or right <= left:
         raise ValueError("Could not derive the Screen Time summary text region")
+    return left, top, right, bottom
+
+
+def crop_summary_text(image: np.ndarray, chart: ChartGeometry) -> np.ndarray:
+    """Crop the date and daily-total text using the hourly chart as an anchor."""
+    left, top, right, bottom = summary_text_bounds(image, chart)
     return image[top:bottom, left:right]
+
+
+def save_detection_boxes(
+    image: np.ndarray,
+    chart: ChartGeometry,
+    image_path: str | Path,
+    boxes_dir: Path,
+) -> Path:
+    """Save a copy with the detected summary and hourly-chart regions marked."""
+    annotated = image.copy()
+    summary_left, summary_top, summary_right, summary_bottom = summary_text_bounds(
+        image,
+        chart,
+    )
+    thickness = max(2, int(round(min(image.shape[:2]) / 500)))
+    cv2.rectangle(
+        annotated,
+        (chart.left, chart.top),
+        (chart.right, chart.baseline),
+        (0, 255, 0),
+        thickness,
+    )
+    cv2.rectangle(
+        annotated,
+        (summary_left, summary_top),
+        (summary_right - 1, summary_bottom - 1),
+        (255, 0, 255),
+        thickness,
+    )
+    boxes_dir.mkdir(parents=True, exist_ok=True)
+    output_path = boxes_dir / Path(image_path).name
+    if not cv2.imwrite(str(output_path), annotated):
+        raise OSError(f"Could not write detection-box image: {output_path}")
+    return output_path
 
 
 def parse_swedish_date(text: str) -> str:
@@ -290,6 +333,7 @@ def extract_chart(
 def extract_screen_time(
     image_path: str | Path,
     ocr: "OcrBackend",
+    boxes_dir: Path | None = None,
 ) -> ScreenTimeReading:
     image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
     if image is None:
@@ -299,39 +343,49 @@ def extract_screen_time(
     date = parse_swedish_date(ocr_result.text)
     total_minutes = parse_total_minutes(ocr_result.text)
     hourly = read_hourly_bars(image, chart, total_minutes=total_minutes)
-    return ScreenTimeReading(
+    reading = ScreenTimeReading(
         date=date,
         total_minutes=total_minutes,
         hourly_minutes=hourly,
     )
+    if boxes_dir is not None:
+        save_detection_boxes(image, chart, image_path, boxes_dir)
+    return reading
 
 
 def extract_screen_times(
     image_paths: list[str | Path],
     ocr: "OcrBackend",
+    boxes_dir: Path | None = None,
 ) -> list[ScreenTimeReading]:
+
     prepared: list[tuple[np.ndarray, ChartGeometry]] = []
     crops: list[np.ndarray] = []
     for image_path in image_paths:
         image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
         if image is None:
             raise FileNotFoundError(image_path)
-        chart = locate_hourly_chart(image)
+        chart = locate_hourly_chart(image) # Locate chart bounding box coords using Hough transform
         prepared.append((image, chart))
-        crops.append(crop_summary_text(image, chart))
+        crops.append(crop_summary_text(image, chart)) # Crop region where text is located
 
     readings: list[ScreenTimeReading] = []
-    for (image, chart), ocr_result in zip(prepared, ocr.recognize_many(crops)):
+    for image_path, (image, chart), ocr_result in zip(
+        image_paths,
+        prepared,
+        ocr.recognize_many(crops),
+    ):
         date = parse_swedish_date(ocr_result.text)
         total_minutes = parse_total_minutes(ocr_result.text)
         hourly = read_hourly_bars(image, chart, total_minutes=total_minutes)
-        readings.append(
-            ScreenTimeReading(
-                date=date,
-                total_minutes=total_minutes,
-                hourly_minutes=hourly,
-            )
+        reading = ScreenTimeReading(
+            date=date,
+            total_minutes=total_minutes,
+            hourly_minutes=hourly,
         )
+        if boxes_dir is not None:
+            save_detection_boxes(image, chart, image_path, boxes_dir)
+        readings.append(reading)
     return readings
 
 
@@ -340,13 +394,9 @@ def main() -> None:
     parser.add_argument("images", nargs="+")
     parser.add_argument(
         "--ocr-profile",
-        choices=("none", "cpu", "gpu", "vl"),
+        choices=("none", "cpu", "gpu"),
         default="none",
-        help="CPU PP-OCRv5, local Transformers GPU, PaddleOCR-VL, or bars only",
-    )
-    parser.add_argument(
-        "--vl-server-url",
-        help="Base URL of a remote PaddleOCR-VL vLLM server, e.g. http://host:8080",
+        help="CPU PP-OCRv5, local Transformers GPU, or bars only",
     )
     parser.add_argument(
         "--batch-size",
@@ -364,6 +414,18 @@ def main() -> None:
         type=int,
         help="OCR/displayed daily total; reconciles per-bar pixel rounding",
     )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("output"),
+        help="Directory for timestamped JSONL results (default: output)",
+    )
+    parser.add_argument(
+        "--boxes-dir",
+        type=Path,
+        default=Path("boxes"),
+        help="Directory for successful detection-box images (default: boxes)",
+    )
     args = parser.parse_args()
     expanded_images: list[str] = []
     for pattern in args.images:
@@ -374,34 +436,41 @@ def main() -> None:
         parser.error("--total-minutes can only be used with one image")
     if args.ocr_profile != "none" and args.total_minutes is not None:
         parser.error("--total-minutes cannot be combined with an OCR profile")
-    if args.vl_server_url and args.ocr_profile != "vl":
-        parser.error("--vl-server-url requires --ocr-profile vl")
     if args.batch_size < 1:
         parser.error("--batch-size must be positive")
 
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    run_timestamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
+    output_path = args.output_dir / f"screen-time-{run_timestamp}.jsonl"
+    output_file = output_path.open("x", encoding="utf-8")
+
+    def emit(payload: dict[str, object]) -> None:
+        print(json.dumps(payload, ensure_ascii=False), file=output_file, flush=True)
+
+    # Retrieve the appropriate OCR-backend (CPU vs GPU)
     ocr = None
     if args.ocr_profile != "none":
         from ocr_backends import create_ocr_backend
-
         with redirect_stdout(sys.stderr):
-            ocr = create_ocr_backend(
-                args.ocr_profile,
-                server_url=args.vl_server_url,
-            )
+            ocr = create_ocr_backend(args.ocr_profile)
 
     if ocr is not None:
         for start in range(0, len(args.images), args.batch_size):
             paths = args.images[start : start + args.batch_size]
             try:
                 with redirect_stdout(sys.stderr):
-                    readings = extract_screen_times(paths, ocr)
+                    readings = extract_screen_times(paths, ocr, args.boxes_dir)
             except Exception:
                 if not args.continue_on_error:
                     raise
                 for image_path in paths:
                     try:
                         with redirect_stdout(sys.stderr):
-                            reading = extract_screen_time(image_path, ocr)
+                            reading = extract_screen_time(
+                                image_path,
+                                ocr,
+                                args.boxes_dir,
+                            )
                         payload = {"image": image_path, **reading.model_dump()}
                     except Exception as error:
                         payload = {
@@ -409,33 +478,34 @@ def main() -> None:
                             "error": type(error).__name__,
                             "message": str(error),
                         }
-                    print(json.dumps(payload, ensure_ascii=False))
+                    emit(payload)
                 continue
             for image_path, reading in zip(paths, readings):
-                print(
-                    json.dumps(
-                        {"image": image_path, **reading.model_dump()},
-                        ensure_ascii=False,
-                    )
-                )
+                emit({"image": image_path, **reading.model_dump()})
+        output_file.close()
+        print(f"Wrote results to {output_path}", file=sys.stderr)
         return
 
+    # Take this branch if ocr = "none"
     for image_path in args.images:
         geometry, hourly = extract_chart(
             image_path,
             total_minutes=args.total_minutes,
         )
-        print(
-            json.dumps(
-                {
-                    "image": image_path,
-                    "geometry": asdict(geometry),
-                    "hourly_minutes": hourly,
-                    "hourly_sum": sum(hourly),
-                },
-                ensure_ascii=False,
-            )
+        image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+        if image is None:
+            raise FileNotFoundError(image_path)
+        save_detection_boxes(image, geometry, image_path, args.boxes_dir)
+        emit(
+            {
+                "image": image_path,
+                "geometry": asdict(geometry),
+                "hourly_minutes": hourly,
+                "hourly_sum": sum(hourly),
+            }
         )
+    output_file.close()
+    print(f"Wrote results to {output_path}", file=sys.stderr)
 
 
 if __name__ == "__main__":

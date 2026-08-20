@@ -10,16 +10,12 @@ dependencies = [
     "pip>=26.2.1",
     "pydantic>=2.12.5",
     "pytesseract>=0.3.13",
-    "requests>=2.34.2",
 ]
 
 [project.optional-dependencies]
 ocr-cpu = [
     "paddleocr>=3.6.0,<4",
     "paddlepaddle==3.2.2",
-]
-ocr-vl-client = [
-    "paddleocr[doc-parser]>=3.6.0,<4",
 ]
 ocr-dgx = [
     "torch>=2.11.0",

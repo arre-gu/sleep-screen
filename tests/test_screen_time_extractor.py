@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import numpy as np
 
@@ -62,7 +63,12 @@ class ExtractionTests(unittest.TestCase):
                 "måndag, 23 mars\n4 h 19 m",
             ]
         )
-        readings = extract_screen_times(paths, ocr)
+        with TemporaryDirectory() as boxes_dir:
+            readings = extract_screen_times(paths, ocr, Path(boxes_dir))
+            self.assertEqual(
+                sorted(path.name for path in Path(boxes_dir).iterdir()),
+                [f"image{index}.png" for index in range(1, 6)],
+            )
         self.assertEqual([reading.total_minutes for reading in readings], [231, 163, 184, 313, 259])
         self.assertTrue(all(len(reading.hourly_minutes) == 24 for reading in readings))
         self.assertTrue(
