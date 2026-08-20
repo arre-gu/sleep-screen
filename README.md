@@ -102,13 +102,10 @@ cache under `~/.cache/huggingface/`.
 Create output directories and process every PNG in `images/`:
 
 ```bash
-mkdir -p output logs
-
 uv run python screen_time_extractor.py 'images/*.png' \
   --ocr-profile gpu \
   --batch-size 8 \
-  --continue-on-error \
-  2> logs/screen-time.log
+  --continue-on-error
 ```
 
 For a quick test with one image:
