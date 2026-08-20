@@ -18,15 +18,6 @@ Choose one setup:
 
 ### Install
 
-Open PowerShell in the project directory. Install `uv` if needed:
-
-```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
-
-Restart PowerShell if `uv` is not immediately available, then install the CPU
-OCR environment:
-
 ```powershell
 uv sync --extra ocr-cpu
 ```
@@ -63,26 +54,9 @@ architecture.
 
 ### Verify the machine
 
-Run these commands on the DGX Spark:
-
-```bash
-uname -m
-nvidia-smi
-```
-
-`uname -m` should report `aarch64` and `nvidia-smi` should show the GPU.
-
 ### Install
 
-Open a shell in the project directory. Install `uv` if needed:
-
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-export PATH="$HOME/.local/bin:$PATH"
-```
-
 Install the DGX environment. The project configuration selects PyTorch's CUDA
-13.0 package index automatically:
 
 ```bash
 uv sync --extra ocr-dgx
