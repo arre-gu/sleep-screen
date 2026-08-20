@@ -40,13 +40,10 @@ recognizer. The first processing run downloads their weights into
 Create output directories and process every PNG in `images/`:
 
 ```powershell
-New-Item -ItemType Directory -Force output, logs
-
 uv run python screen_time_extractor.py 'images\*.png' `
   --ocr-profile cpu `
   --batch-size 16 `
-  --continue-on-error `
-  2> logs\screen-time.log
+  --continue-on-error
 ```
 
 For a quick test with one image:
