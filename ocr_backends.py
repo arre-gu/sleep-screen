@@ -56,6 +56,27 @@ def _find_value(data: Any, key: str) -> Any | None:
     return None
 
 
+def _paddleocr_vl_min_pixels(image_processor: Any) -> int:
+    """Return PaddleOCR-VL's configured lower image-pixel limit.
+
+    Transformers has exposed this setting both as ``min_pixels`` and inside
+    the processor's ``size`` mapping across releases.  Keep the lookup here
+    tolerant of both layouts so the ARM/GPU backend does not depend on one
+    particular Transformers version.
+    """
+    size = getattr(image_processor, "size", None)
+    if isinstance(size, dict):
+        shortest_edge = size.get("shortest_edge")
+        if isinstance(shortest_edge, int) and shortest_edge > 0:
+            return shortest_edge
+
+    min_pixels = getattr(image_processor, "min_pixels", None)
+    if isinstance(min_pixels, int) and min_pixels > 0:
+        return min_pixels
+
+    return 384 * 384
+
+
 class PaddleMobileOcr:
     """CPU OCR using PP-OCRv5 detection and Latin-script recognition."""
 
