@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 
 import numpy as np
 
-from ocr_backends import OcrResult
+from ocr_backends import OcrResult, _paddleocr_vl_min_pixels
 from screen_time_extractor import (
     ScreenTimeReading,
     extract_screen_times,
@@ -68,6 +69,14 @@ class ExtractionTests(unittest.TestCase):
         self.assertTrue(
             all(sum(reading.hourly_minutes) == reading.total_minutes for reading in readings)
         )
+
+
+class GpuBackendTests(unittest.TestCase):
+    def test_transformers_processor_uses_size_configuration(self) -> None:
+        image_processor = SimpleNamespace(
+            size={"shortest_edge": 384 * 384}
+        )
+        self.assertEqual(_paddleocr_vl_min_pixels(image_processor), 384 * 384)
 
 
 if __name__ == "__main__":

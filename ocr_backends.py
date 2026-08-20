@@ -162,6 +162,12 @@ class PaddleVlOcr:
         return outputs
 
 
+def _paddleocr_vl_min_pixels(image_processor: Any) -> int:
+    """Get the configured lower pixel bound across Transformers versions."""
+    size = image_processor.size
+    return size["shortest_edge"] if isinstance(size, dict) else size.shortest_edge
+
+
 class TransformersVlOcr:
     """PaddleOCR-VL through PyTorch/Transformers for ARM64 NVIDIA GPUs."""
 
@@ -201,6 +207,11 @@ class TransformersVlOcr:
             }
         ]
         max_pixels = 1280 * 28 * 28
+        # Transformers 5.15 stores PaddleOCR-VL's pixel limits in `size`;
+        # older versions exposed the lower limit as `min_pixels` directly.
+        # Read the supported processor configuration instead of assuming the
+        # legacy attribute exists.
+        min_pixels = _paddleocr_vl_min_pixels(self._processor.image_processor)
         inputs = self._processor.apply_chat_template(
             messages,
             add_generation_prompt=True,
@@ -209,7 +220,7 @@ class TransformersVlOcr:
             return_tensors="pt",
             images_kwargs={
                 "size": {
-                    "shortest_edge": self._processor.image_processor.min_pixels,
+                    "shortest_edge": min_pixels,
                     "longest_edge": max_pixels,
                 }
             },
